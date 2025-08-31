@@ -6,7 +6,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
-from starlette.middleware.authentication import AuthenticationMiddleware, AuthCredentials, SimpleUser
+from starlette.middleware.authentication import AuthenticationMiddleware, AuthCredentials
+from starlette.authentication import SimpleUser
 import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
