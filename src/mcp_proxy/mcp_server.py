@@ -6,7 +6,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
-
+from starlette.middleware.authentication import AuthenticationMiddleware, AuthCredentials
+from starlette.authentication import SimpleUser
 import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -15,7 +16,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.middleware.authentication import AuthenticationMiddleware
+from starlette.middleware.authentication import AuthenticationMiddleware, AuthenticationError
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -46,24 +47,23 @@ class HeaderAuthBackend:
         """Initialize the authentication backend with the required token."""
         self.auth_token = auth_token
 
-    async def authenticate(self, request: Request) -> tuple[bool, None]:
+    async def authenticate(self, request: Request) -> None:
+        logger.debug("Authenticating request")
         """Authenticate the request by checking the Authorization header."""
         auth_header = request.headers.get("Authorization")
         if not auth_header:
             logger.warning("No Authorization header provided")
-            return False, None
+            raise AuthenticationError("No Authorization header provided")
 
         if not auth_header.startswith("Bearer "):
             logger.warning("Invalid Authorization header format")
-            return False, None
+            raise AuthenticationError("Invalid Authorization header format")
 
         token = auth_header[7:]  # Remove "Bearer " prefix
         if token != self.auth_token:
             logger.warning("Invalid authentication token")
-            return False, None
-
-        return True, None
-
+            raise AuthenticationError("Invalid authentication token")
+        return AuthCredentials(["authenticated"]), SimpleUser("bearer-token-user")
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
 _global_status: dict[str, Any] = {
@@ -125,6 +125,8 @@ def create_single_instance_routes(
     ]
     return routes, http_session_manager
 
+def _on_auth_error(conn, exc):
+    return JSONResponse({"detail": str(exc)}, status_code=401)
 
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
@@ -209,7 +211,11 @@ async def run_mcp_server(
 
         if mcp_settings.auth_token is not None:
             middleware.append(
-                Middleware(AuthenticationMiddleware, backend=HeaderAuthBackend(auth_token=mcp_settings.auth_token)),
+                Middleware(
+                    AuthenticationMiddleware,
+                    backend=HeaderAuthBackend(auth_token=mcp_settings.auth_token),
+                    on_error=_on_auth_error,
+                ),
             )
 
         starlette_app = Starlette(
